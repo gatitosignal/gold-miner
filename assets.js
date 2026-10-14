@@ -1,5 +1,4 @@
 const Assets = (() => {
-  const ASSET_VERSION = "20261014-lite-png";
   const sources = {
     Miner: "assets/Miner.png",
     MinerLower: "assets/MinerLower.png",
@@ -92,8 +91,7 @@ const Assets = (() => {
   }
 
   function withVersion(src, index) {
-    const separator = src.includes("?") ? "&" : "?";
-    return `${src}${separator}v=${ASSET_VERSION}.${index}`;
+    return src;
   }
 
   function stats() {
