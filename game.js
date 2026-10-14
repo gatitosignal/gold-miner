@@ -198,6 +198,62 @@
       return;
     }
     drawCaveBackground();
+    drawStartFallback();
+  }
+
+  function drawStartFallback() {
+    const b = game.startButton;
+    const gold = Assets.get("GoldLarge") || Assets.get("GoldSmall");
+    const miner = Assets.get("Miner");
+    if (gold && gold.complete && gold.naturalWidth) {
+      ctx.save();
+      ctx.shadowColor = "rgba(255, 224, 0, 0.65)";
+      ctx.shadowBlur = 48;
+      ctx.drawImage(gold, b.x, b.y + 80, b.w * 0.62, b.w * 0.46);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.fillStyle = "#f1c315";
+      ctx.beginPath();
+      ctx.ellipse(b.x + b.w * 0.28, b.y + b.h * 0.45, b.w * 0.25, b.h * 0.22, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (miner && miner.complete && miner.naturalWidth) {
+      const mh = H * 0.62;
+      const mw = mh * (miner.naturalWidth / miner.naturalHeight);
+      ctx.drawImage(miner, W - mw * 0.72, H * 0.24, mw, mh);
+    }
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#6b3700";
+    ctx.font = "900 88px 'Microsoft YaHei', Arial";
+    ctx.fillText("开始", b.x + b.w * 0.28, b.y + b.h * 0.47);
+    ctx.fillStyle = "#e7a300";
+    drawRoundRect(b.x + 96, b.y + b.h - 76, 270, 62, 12);
+    ctx.fill();
+    ctx.fillStyle = "#6b3700";
+    ctx.font = "900 30px 'Microsoft YaHei', Arial";
+    ctx.fillText("点击开始游戏", b.x + 231, b.y + b.h - 45);
+    ctx.restore();
+  }
+
+  function drawRoundRect(x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    ctx.lineTo(x + r, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
   }
 
   function drawGame() {
