@@ -34,6 +34,28 @@ canvas {
   cursor: pointer;
 }
 
+.asset-debug {
+  position: fixed;
+  left: 8px;
+  top: 8px;
+  z-index: 20;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: 42vh;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 2px solid #ffcf44;
+  border-radius: 8px;
+  background: rgba(16, 9, 2, 0.86);
+  color: #ffe294;
+  font: 700 12px/1.45 Consolas, "Microsoft YaHei", monospace;
+  pointer-events: none;
+}
+
+.asset-debug[hidden] {
+  display: none;
+}
+
 .reward-overlay {
   position: fixed;
   inset: 0;

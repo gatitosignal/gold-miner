@@ -1,4 +1,5 @@
 const Assets = (() => {
+  const ASSET_VERSION = "20261014-lite-png";
   const sources = {
     Miner: "assets/Miner.png",
     MinerLower: "assets/MinerLower.png",
@@ -16,23 +17,112 @@ const Assets = (() => {
   };
 
   const images = {};
+  const records = {};
+  const attempts = 3;
+  const core = Object.keys(sources);
+  let panel = null;
 
   function load() {
-    const jobs = Object.entries(sources).map(([name, src]) => new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(img);
-      img.src = src;
-      images[name] = img;
-    }));
-    return Promise.all(jobs);
+    const jobs = Object.entries(sources).map(([name, src]) => loadImage(name, src));
+    return Promise.all(jobs).then(() => {
+      updateDebugPanel();
+      const failedCore = core.filter((name) => !records[name]?.ok);
+      if (failedCore.length) {
+        console.warn("[Assets] Core images failed:", failedCore.map((name) => records[name]));
+      }
+      return records;
+    });
   }
 
   function get(name) {
     return images[name];
   }
 
-  return { load, get };
+  function loadImage(name, src, index = 0) {
+    const url = withVersion(src, index);
+    records[name] = {
+      name,
+      src,
+      url,
+      ok: false,
+      attempts: index + 1,
+      width: 0,
+      height: 0,
+      error: "",
+    };
+    updateDebugPanel();
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      images[name] = img;
+      const retry = (reason) => {
+        records[name].error = reason;
+        console.warn(`[Assets] ${name} failed (${reason})`, url);
+        if (index + 1 < attempts) {
+          setTimeout(() => resolve(loadImage(name, src, index + 1)), 160 * (index + 1));
+        } else {
+          updateDebugPanel();
+          resolve(img);
+        }
+      };
+
+      img.onload = () => {
+        const decoded = typeof img.decode === "function"
+          ? img.decode().catch((err) => Promise.reject(err))
+          : Promise.resolve();
+        decoded.then(() => {
+          records[name] = {
+            name,
+            src,
+            url,
+            ok: !!img.naturalWidth,
+            attempts: index + 1,
+            width: img.naturalWidth || 0,
+            height: img.naturalHeight || 0,
+            error: img.naturalWidth ? "" : "decoded-empty-image",
+          };
+          updateDebugPanel();
+          if (!img.naturalWidth) retry("decoded-empty-image");
+          else resolve(img);
+        }).catch((err) => retry(`decode: ${err?.message || err || "unknown"}`));
+      };
+      img.onerror = () => retry("network-or-decode-error");
+      img.src = url;
+    });
+  }
+
+  function withVersion(src, index) {
+    const separator = src.includes("?") ? "&" : "?";
+    return `${src}${separator}v=${ASSET_VERSION}.${index}`;
+  }
+
+  function stats() {
+    const list = Object.values(records);
+    const loaded = list.filter((item) => item.ok);
+    const failed = list.filter((item) => !item.ok && item.error);
+    return { total: Object.keys(sources).length, loaded, failed, records };
+  }
+
+  function updateDebugPanel() {
+    const data = stats();
+    const shouldShow = data.failed.length || new URLSearchParams(location.search).has("debug");
+    if (!shouldShow) {
+      if (panel) panel.hidden = true;
+      return;
+    }
+    if (!panel) {
+      panel = document.createElement("aside");
+      panel.className = "asset-debug";
+      document.body.appendChild(panel);
+    }
+    panel.hidden = false;
+    const rows = Object.values(records)
+      .map((item) => `${item.ok ? "OK" : "FAIL"} ${item.name}: ${item.width}x${item.height}${item.error ? ` ${item.error}` : ""}`)
+      .join("<br>");
+    panel.innerHTML = `<b>素材加载</b> ${data.loaded.length}/${data.total}<br>${rows}`;
+  }
+
+  return { load, get, stats };
 })();
 const AudioManager = (() => {
   const sounds = {};
