@@ -37,6 +37,7 @@ var SettlementModal = (() => {
 
   function open({ score, onContinue, onOpenReward }) {
     const collected = CollectionStore.rewards();
+    RewardImageLoader.dispose(overlay);
     overlay.hidden = false;
     syncViewportSize();
     overlay.innerHTML = `
@@ -58,7 +59,7 @@ var SettlementModal = (() => {
         </div>
       </section>
     `;
-    bindImageFallbacks();
+    RewardImageLoader.bind(overlay);
     overlay.querySelector(".settlement-continue")?.addEventListener("click", onContinue);
     overlay.querySelectorAll(".collection-item").forEach((button) => {
       button.addEventListener("click", () => {
@@ -69,6 +70,7 @@ var SettlementModal = (() => {
   }
 
   function close() {
+    RewardImageLoader.dispose(overlay);
     overlay.hidden = true;
     overlay.innerHTML = "";
   }
@@ -84,13 +86,7 @@ var SettlementModal = (() => {
 
   function thumbBlock(reward) {
     const src = rewardThumb(reward);
-    if (!src) return `<span class="collection-thumb"><span class="image-placeholder">惊喜</span></span>`;
-    return `
-      <span class="collection-thumb">
-        <img src="${escapeAttr(src)}" alt="${escapeAttr(reward.title || reward.couponName || "惊喜")}" draggable="false" />
-        <span class="image-placeholder" hidden>惊喜</span>
-      </span>
-    `;
+    return `<span class="collection-thumb">${RewardImageLoader.markup(src, reward.title || reward.couponName || "惊喜")}</span>`;
   }
 
   function rewardThumb(reward) {
@@ -112,15 +108,6 @@ var SettlementModal = (() => {
     overlay.style.setProperty("--visual-vh", `${Math.floor(height)}px`);
     overlay.style.width = `${Math.floor(width)}px`;
     overlay.style.height = `${Math.floor(height)}px`;
-  }
-
-  function bindImageFallbacks() {
-    overlay.querySelectorAll(".collection-thumb img").forEach((img) => {
-      img.addEventListener("error", () => {
-        img.hidden = true;
-        img.nextElementSibling.hidden = false;
-      });
-    });
   }
 
   function escapeHtml(value) {

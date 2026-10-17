@@ -1,9 +1,342 @@
+var RewardImageLoader = (() => {
+  const VERSION = "20261017-mobile-memory-v4";
+  const MAX_CONCURRENT = 2;
+  const REQUEST_TIMEOUT = 45000;
+  const DECODE_TIMEOUT = 12000;
+  const MAX_CACHE_BYTES = 4 * 1024 * 1024;
+  const RETRIES = 2;
+  const queue = [];
+  const scopes = new WeakMap();
+  const blobCache = new Map();
+  const records = [];
+  let active = 0;
+  let cachedBytes = 0;
+
+  function markup(src, label, fallback = "图片加载失败") {
+    if (!src) {
+      return `<span class="reward-img"><span class="image-placeholder">待替换图片</span></span>`;
+    }
+    return `
+      <span class="reward-img is-loading">
+        <img data-reward-src="${escapeAttr(src)}" alt="${escapeAttr(label || "奖励图片")}" draggable="false" hidden />
+        <span class="image-placeholder" role="status">
+          <span class="image-status">图片加载中…</span>
+          <span class="image-retry" role="button" tabindex="0" hidden>${escapeHtml(fallback)}，点此重试</span>
+        </span>
+      </span>
+    `;
+  }
+
+  function bind(root) {
+    dispose(root);
+    const scope = { root, disposed: false, controllers: new Set(), objectUrls: new Set() };
+    scopes.set(root, scope);
+    root.querySelectorAll("img[data-reward-src]").forEach((img) => enqueue(() => loadElement(scope, img)));
+    scope.clickHandler = (event) => {
+      const retry = event.target.closest?.(".image-retry");
+      if (!retry || !root.contains(retry)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const img = retry.closest(".reward-img")?.querySelector("img[data-reward-src]");
+      if (img) enqueue(() => loadElement(scope, img));
+    };
+    scope.keyHandler = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const retry = event.target.closest?.(".image-retry");
+      if (retry) retry.click();
+    };
+    root.addEventListener("click", scope.clickHandler);
+    root.addEventListener("keydown", scope.keyHandler);
+    return scope;
+  }
+
+  function dispose(root) {
+    const scope = scopes.get(root);
+    if (!scope) return;
+    scope.disposed = true;
+    scope.controllers.forEach((controller) => controller.abort());
+    scope.controllers.clear();
+    root.removeEventListener("click", scope.clickHandler);
+    root.removeEventListener("keydown", scope.keyHandler);
+    root.querySelectorAll("img[data-reward-src]").forEach((img) => img.removeAttribute("src"));
+    scope.objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    scope.objectUrls.clear();
+    scopes.delete(root);
+  }
+
+  function enqueue(task) {
+    queue.push(task);
+    pump();
+  }
+
+  function pump() {
+    while (active < MAX_CONCURRENT && queue.length) {
+      const task = queue.shift();
+      active += 1;
+      Promise.resolve()
+        .then(task)
+        .catch(() => {})
+        .finally(() => {
+          active -= 1;
+          pump();
+        });
+    }
+  }
+
+  async function loadElement(scope, img) {
+    if (scope.disposed || !img.isConnected) return;
+    const holder = img.closest(".reward-img");
+    const source = img.dataset.rewardSrc;
+    let lastError = null;
+    setState(holder, "loading", "图片加载中…");
+    for (let attempt = 1; attempt <= RETRIES; attempt += 1) {
+      if (scope.disposed) return;
+      const record = {
+        source,
+        requestUrl: versionedUrl(source),
+        attempt,
+        phase: "network",
+        ok: false,
+        errorType: "",
+        error: "",
+        status: null,
+        contentType: "",
+        bytes: 0,
+        width: 0,
+        height: 0,
+        renderedWidth: 0,
+        renderedHeight: 0,
+        startedAt: Math.round(performance.now()),
+        durationMs: 0,
+        fromCache: false,
+      };
+      records.push(record);
+      if (records.length > 100) records.shift();
+      try {
+        const blob = await fetchBlob(scope, record);
+        if (scope.disposed) return;
+        record.phase = "decode";
+        setState(holder, "loading", `正在解码${attempt > 1 ? `（重试 ${attempt}）` : ""}…`);
+        await showBlob(scope, img, blob, record);
+        if (scope.disposed) return;
+        record.ok = true;
+        record.phase = "ready";
+        record.durationMs = Math.round(performance.now() - record.startedAt);
+        setState(holder, "ready", "");
+        requestAnimationFrame(() => auditRender(img, record));
+        return;
+      } catch (error) {
+        if (scope.disposed || error?.imageType === "cancelled") return;
+        lastError = error;
+        const failedPhase = record.phase;
+        record.phase = "failed";
+        record.errorType = error?.imageType || "network";
+        record.error = error?.message || String(error);
+        record.durationMs = Math.round(performance.now() - record.startedAt);
+        if (failedPhase === "decode") removeFromCache(record.requestUrl);
+        console.warn(`[RewardImage] ${record.errorType} failure`, record.requestUrl, error);
+        if (attempt < RETRIES) {
+          setState(holder, "loading", `加载失败，正在重试（${attempt + 1}/${RETRIES}）…`);
+          await delay(300 * attempt);
+        }
+      }
+    }
+    img.hidden = true;
+    setState(holder, "error", `${errorLabel(lastError)}；点此重试`);
+  }
+
+  async function fetchBlob(scope, record) {
+    const url = record.requestUrl;
+    const cached = blobCache.get(url);
+    if (cached) {
+      cached.lastUsed = performance.now();
+      record.fromCache = true;
+      record.contentType = cached.blob.type;
+      record.bytes = cached.blob.size;
+      record.phase = "cache";
+      return cached.blob;
+    }
+
+    const controller = new AbortController();
+    scope.controllers.add(controller);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT);
+    try {
+      const response = await fetch(url, {
+        cache: "default",
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      record.status = response.status;
+      record.contentType = response.headers.get("content-type") || "";
+      if (!response.ok) throw imageError("network", `HTTP ${response.status}`);
+      const mediaType = record.contentType.toLowerCase().split(";", 1)[0].trim();
+      if (mediaType && !mediaType.startsWith("image/") && mediaType !== "application/octet-stream") {
+        throw imageError("decode", `unexpected Content-Type: ${record.contentType}`);
+      }
+      record.phase = "download";
+      const blob = await response.blob();
+      if (!blob.size) throw imageError("network", "empty response body");
+      record.bytes = blob.size;
+      addToCache(url, blob);
+      return blob;
+    } catch (error) {
+      if (error?.imageType) throw error;
+      if (timedOut) throw imageError("timeout", `download timeout after ${REQUEST_TIMEOUT}ms`);
+      if (controller.signal.aborted) throw imageError("cancelled", "modal closed");
+      throw imageError("network", error?.message || "request failed");
+    } finally {
+      clearTimeout(timer);
+      scope.controllers.delete(controller);
+    }
+  }
+
+  function showBlob(scope, img, blob, record) {
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(blob);
+      scope.objectUrls.add(objectUrl);
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        img.onload = null;
+        img.onerror = null;
+        if (fn === reject) {
+          img.removeAttribute("src");
+          URL.revokeObjectURL(objectUrl);
+          scope.objectUrls.delete(objectUrl);
+        }
+        fn(value);
+      };
+      const timer = setTimeout(() => finish(reject, imageError("timeout", `decode timeout after ${DECODE_TIMEOUT}ms`)), DECODE_TIMEOUT);
+      img.onload = () => {
+        if (!img.naturalWidth || !img.naturalHeight) {
+          finish(reject, imageError("decode", "decoded image has zero dimensions"));
+          return;
+        }
+        record.width = img.naturalWidth;
+        record.height = img.naturalHeight;
+        img.hidden = false;
+        finish(resolve, img);
+      };
+      img.onerror = () => finish(reject, imageError("decode", "browser rejected WebP image data"));
+      img.src = objectUrl;
+    });
+  }
+
+  function auditRender(img, record) {
+    if (!img.isConnected || img.hidden) return;
+    const rect = img.getBoundingClientRect();
+    const style = getComputedStyle(img);
+    record.renderedWidth = Math.round(rect.width);
+    record.renderedHeight = Math.round(rect.height);
+    if (!rect.width || !rect.height || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      record.ok = false;
+      record.phase = "failed";
+      record.errorType = "render";
+      record.error = `not visible (${rect.width}x${rect.height}, ${style.display}/${style.visibility}/${style.opacity})`;
+      console.warn("[RewardImage] render failure", record.requestUrl, record.error);
+    }
+  }
+
+  function setState(holder, state, message) {
+    if (!holder) return;
+    holder.classList.toggle("is-loading", state === "loading");
+    holder.classList.toggle("is-error", state === "error");
+    const placeholder = holder.querySelector(".image-placeholder");
+    const status = holder.querySelector(".image-status");
+    const retry = holder.querySelector(".image-retry");
+    const img = holder.querySelector("img[data-reward-src]");
+    if (placeholder) placeholder.hidden = state === "ready";
+    if (status) {
+      status.hidden = state === "error";
+      status.textContent = message;
+    }
+    if (retry) {
+      retry.hidden = state !== "error";
+      retry.textContent = message;
+    }
+    if (img && state !== "ready") img.hidden = true;
+  }
+
+  function addToCache(url, blob) {
+    if (blob.size > MAX_CACHE_BYTES) return;
+    while (cachedBytes + blob.size > MAX_CACHE_BYTES && blobCache.size) {
+      const oldest = [...blobCache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+      blobCache.delete(oldest[0]);
+      cachedBytes -= oldest[1].blob.size;
+    }
+    blobCache.set(url, { blob, lastUsed: performance.now() });
+    cachedBytes += blob.size;
+  }
+
+  function removeFromCache(url) {
+    const cached = blobCache.get(url);
+    if (!cached) return;
+    blobCache.delete(url);
+    cachedBytes -= cached.blob.size;
+  }
+
+  function versionedUrl(source) {
+    const url = new URL(source, document.baseURI);
+    url.searchParams.set("v", VERSION);
+    return url.href;
+  }
+
+  function errorLabel(error) {
+    const type = error?.imageType || "network";
+    if (type === "decode") return "图片解码失败";
+    if (type === "timeout") return "图片加载超时";
+    if (type === "render") return "图片渲染失败";
+    return "图片下载失败";
+  }
+
+  function imageError(type, message) {
+    const error = new Error(message);
+    error.imageType = type;
+    return error;
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function stats() {
+    return {
+      active,
+      queued: queue.length,
+      cachedBytes,
+      cacheEntries: blobCache.size,
+      records: records.map((record) => ({ ...record })),
+    };
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/'/g, "&#39;");
+  }
+
+  return { markup, bind, dispose, stats };
+})();
+
 var RewardModal = (() => {
   const overlay = document.getElementById("rewardOverlay");
   let closeHandler = null;
 
   function open(reward, onClose) {
     closeHandler = onClose;
+    RewardImageLoader.dispose(overlay);
     overlay.hidden = false;
     syncViewportSize();
     overlay.innerHTML = "";
@@ -12,6 +345,7 @@ var RewardModal = (() => {
   }
 
   function close(notify = true) {
+    RewardImageLoader.dispose(overlay);
     overlay.hidden = true;
     overlay.innerHTML = "";
     const handler = closeHandler;
@@ -175,7 +509,7 @@ var RewardModal = (() => {
   }
 
   function bindTemplate(reward) {
-    bindImageFallbacks();
+    RewardImageLoader.bind(overlay);
     if (reward.template === "quiz") bindQuiz(reward);
     if (reward.template === "envelope") bindEnvelope();
     if (reward.template === "circular") bindCircular();
@@ -281,29 +615,8 @@ var RewardModal = (() => {
     });
   }
 
-  function bindImageFallbacks() {
-    overlay.querySelectorAll(".reward-img img").forEach((img) => {
-      img.addEventListener("error", () => {
-        img.hidden = true;
-        img.nextElementSibling.hidden = false;
-      });
-      img.addEventListener("load", () => {
-        img.hidden = false;
-        img.nextElementSibling.hidden = true;
-      });
-    });
-  }
-
   function imageBlock(src, label) {
-    if (!src) {
-      return `<span class="reward-img"><span class="image-placeholder">待替换图片</span></span>`;
-    }
-    return `
-      <span class="reward-img">
-        <img src="${escapeAttr(src)}" alt="${escapeAttr(label || "奖励图片")}" draggable="false" />
-        <span class="image-placeholder" hidden>待替换图片</span>
-      </span>
-    `;
+    return RewardImageLoader.markup(src, label);
   }
 
   function displayLabel(item, fallback = "") {

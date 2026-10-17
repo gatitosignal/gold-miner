@@ -508,6 +508,7 @@
       startGame,
       endGame,
       Assets,
+      RewardImageLoader: typeof RewardImageLoader !== "undefined" ? RewardImageLoader : null,
       rewards: typeof REWARDS !== "undefined" ? REWARDS : [],
     };
   }
