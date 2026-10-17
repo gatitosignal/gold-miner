@@ -3,6 +3,9 @@
   const ctx = canvas.getContext("2d");
   const W = CONFIG.width;
   const H = CONFIG.height;
+  if (!ctx) throw new Error("Canvas 2D context is unavailable");
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
   const TOP_H = Math.round(H * CONFIG.topRatio);
   const WINCH_EXIT = { x: W / 2 - 26, y: TOP_H - 6 };
 
@@ -18,12 +21,15 @@
     lastClock: performance.now(),
     flash: 0,
     modal: null,
-    startButton: { x: 88, y: 72, w: 500, h: 520 },
+    startButton: { x: 75, y: 45, w: 510, h: 515 },
   };
+  let last = performance.now();
+  let frames = 0;
+  let lastTelemetry = 0;
 
-  Assets.load().then(() => {
-    requestAnimationFrame(frame);
-  });
+  // Rendering starts immediately. Asset completion is an enhancement, never a gate.
+  requestAnimationFrame(frame);
+  Promise.resolve(Assets.load()).catch((error) => Assets.reportRuntimeError(error));
 
   function startGame() {
     game.screen = "PLAY";
@@ -66,10 +72,18 @@
     };
   }
 
-  canvas.addEventListener("pointerdown", pointer);
-  canvas.addEventListener("touchstart", pointer, { passive: false });
-  window.addEventListener("pointerdown", () => AudioManager.unlock(), { passive: true });
-  window.addEventListener("touchstart", () => AudioManager.unlock(), { passive: true });
+  if (window.PointerEvent) {
+    canvas.addEventListener("pointerdown", pointer, { passive: false });
+  } else {
+    let lastTouchAt = 0;
+    canvas.addEventListener("touchstart", (event) => {
+      lastTouchAt = performance.now();
+      pointer(event);
+    }, { passive: false });
+    canvas.addEventListener("mousedown", (event) => {
+      if (performance.now() - lastTouchAt > 700) pointer(event);
+    });
+  }
 
   function update(dt, now) {
     if (game.screen !== "PLAY") return;
@@ -192,8 +206,9 @@
   }
 
   function drawStart() {
-    const cover = Assets.get("StartScreen");
-    if (cover && cover.complete && cover.naturalWidth) {
+    const cover = Assets.peek("StartScreen");
+    if (Assets.isReady("StartScreen") && cover) {
+      game.startButton = { x: 75, y: 45, w: 510, h: 515 };
       ctx.drawImage(cover, 0, 0, W, H);
       return;
     }
@@ -202,7 +217,8 @@
   }
 
   function drawStartFallback() {
-    const b = game.startButton;
+    const b = { x: 86, y: 650, w: 520, h: 183 };
+    game.startButton = b;
     const gold = Assets.get("GoldLarge") || Assets.get("GoldSmall");
     const miner = Assets.get("Miner");
     if (gold && gold.complete && gold.naturalWidth) {
@@ -229,15 +245,35 @@
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "#6b3700";
-    ctx.font = "900 88px 'Microsoft YaHei', Arial";
-    ctx.fillText("开始", b.x + b.w * 0.28, b.y + b.h * 0.47);
-    ctx.fillStyle = "#e7a300";
-    drawRoundRect(b.x + 96, b.y + b.h - 76, 270, 62, 12);
+    ctx.fillStyle = "#ffd52e";
+    ctx.font = "900 84px 'Microsoft YaHei', Arial";
+    ctx.fillText("黄金矿工", 350, 185);
+    const button = Assets.peek("StartButton");
+    if (Assets.isReady("StartButton") && button) {
+      ctx.drawImage(button, b.x, b.y, b.w, b.h);
+    } else {
+      drawNativeStartButton(b);
+    }
+    ctx.restore();
+  }
+
+  function drawNativeStartButton(b) {
+    ctx.save();
+    const gradient = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+    gradient.addColorStop(0, "#fff237");
+    gradient.addColorStop(0.55, "#ffc400");
+    gradient.addColorStop(1, "#d68a00");
+    ctx.fillStyle = gradient;
+    ctx.strokeStyle = "#663700";
+    ctx.lineWidth = 14;
+    drawRoundRect(b.x, b.y, b.w, b.h, 55);
     ctx.fill();
-    ctx.fillStyle = "#6b3700";
-    ctx.font = "900 30px 'Microsoft YaHei', Arial";
-    ctx.fillText("点击开始游戏", b.x + 231, b.y + b.h - 45);
+    ctx.stroke();
+    ctx.fillStyle = "#5b3200";
+    ctx.font = "900 68px 'Microsoft YaHei', Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("开始游戏", b.x + b.w / 2, b.y + b.h / 2 + 3);
     ctx.restore();
   }
 
@@ -336,9 +372,8 @@
   }
 
   function topMinerFrame() {
-    if (game.hook.state === "SHOOT") return Assets.get("MinerLower");
-    if (game.hook.state === "RETURN" || game.hook.state === "GRAB") return Assets.get("MinerRaise");
-    return Assets.get("MinerRaise");
+    if (game.hook.state === "SHOOT") return Assets.get("MinerLower") || Assets.get("Miner");
+    return Assets.get("MinerRaise") || Assets.get("MinerLower") || Assets.get("Miner");
   }
 
   function drawCaveBackground() {
@@ -402,13 +437,45 @@
     ctx.restore();
   }
 
-  let last = performance.now();
   function frame(now) {
-    const dt = Math.min(0.033, (now - last) / 1000);
-    last = now;
-    update(dt, now);
-    draw();
+    try {
+      const dt = Math.min(0.033, (now - last) / 1000);
+      last = now;
+      update(dt, now);
+      draw();
+      frames += 1;
+      if (now - lastTelemetry > 1000) {
+        const rect = canvas.getBoundingClientRect();
+        Assets.setRuntimeInfo({
+          canvas: `${canvas.width}x${canvas.height}`,
+          css: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
+          frames,
+          painted: true,
+          error: "",
+        });
+        lastTelemetry = now;
+      }
+    } catch (error) {
+      Assets.reportRuntimeError(error);
+      drawEmergencyStart();
+    }
     requestAnimationFrame(frame);
+  }
+
+  function drawEmergencyStart() {
+    try {
+      ctx.fillStyle = "#241406";
+      ctx.fillRect(0, 0, W, H);
+      const b = { x: W / 2 - 270, y: H / 2 - 90, w: 540, h: 180 };
+      game.startButton = b;
+      drawNativeStartButton(b);
+    } catch (_) {
+      // Keep the animation loop alive even if this browser loses its canvas context.
+    }
+  }
+
+  if (new URLSearchParams(location.search).has("debug")) {
+    window.__goldMinerDebug = { game, startGame, endGame, Assets };
   }
 })();
 

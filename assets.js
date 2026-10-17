@@ -17,13 +17,19 @@ const Assets = (() => {
 
   const images = {};
   const records = {};
-  const attempts = 3;
+  const attempts = 2;
+  const NETWORK_TIMEOUT = 8000;
+  const DECODE_TIMEOUT = 5000;
+  const ASSET_VERSION = "20261017-mobile-render-v2";
   const core = Object.keys(sources);
   let panel = null;
+  let loadPromise = null;
+  let runtimeInfo = {};
 
   function load() {
+    if (loadPromise) return loadPromise;
     const jobs = Object.entries(sources).map(([name, src]) => loadImage(name, src));
-    return Promise.all(jobs).then(() => {
+    loadPromise = Promise.all(jobs.map((job) => job.catch((error) => error))).then(() => {
       updateDebugPanel();
       const failedCore = core.filter((name) => !records[name]?.ok);
       if (failedCore.length) {
@@ -31,67 +37,183 @@ const Assets = (() => {
       }
       return records;
     });
+    return loadPromise;
   }
 
   function get(name) {
+    const image = images[name];
+    if (isUsable(image)) return image;
+    if (name === "MinerRaise") return firstUsable("Miner", "MinerLower") || image;
+    if (name === "MinerLower") return firstUsable("Miner", "MinerRaise") || image;
+    return image;
+  }
+
+  function peek(name) {
     return images[name];
   }
 
-  function loadImage(name, src, index = 0) {
+  function isReady(name) {
+    return !!records[name]?.ok && isUsable(images[name]);
+  }
+
+  async function loadImage(name, src) {
+    for (let index = 0; index < attempts; index += 1) {
+      const result = await loadAttempt(name, src, index);
+      if (result) return result;
+    }
+    return null;
+  }
+
+  async function loadAttempt(name, src, index) {
     const url = withVersion(src, index);
+    const requestUrl = new URL(url, document.baseURI).href;
+    const startedAt = performance.now();
     records[name] = {
       name,
       src,
-      url,
+      requestUrl,
       ok: false,
       attempts: index + 1,
       width: 0,
       height: 0,
+      phase: "network",
+      errorType: "",
       error: "",
+      httpStatus: null,
+      contentType: "",
+      durationMs: 0,
     };
     updateDebugPanel();
 
-    return new Promise((resolve) => {
-      const img = new Image();
-      images[name] = img;
-      const retry = (reason) => {
-        records[name].error = reason;
-        console.warn(`[Assets] ${name} failed (${reason})`, url);
-        if (index + 1 < attempts) {
-          setTimeout(() => resolve(loadImage(name, src, index + 1)), 160 * (index + 1));
-        } else {
-          updateDebugPanel();
-          resolve(img);
-        }
-      };
+    try {
+      const response = await fetchWithTimeout(requestUrl, NETWORK_TIMEOUT);
+      records[name].httpStatus = response.status;
+      records[name].contentType = response.headers.get("content-type") || "";
+      if (!response.ok) throw assetError("network", `HTTP ${response.status}`);
+      if (records[name].contentType && !records[name].contentType.toLowerCase().startsWith("image/")) {
+        throw assetError("decode", `unexpected Content-Type: ${records[name].contentType}`);
+      }
 
-      img.onload = () => {
-        const decoded = typeof img.decode === "function"
-          ? img.decode().catch((err) => Promise.reject(err))
-          : Promise.resolve();
-        decoded.then(() => {
-          records[name] = {
-            name,
-            src,
-            url,
-            ok: !!img.naturalWidth,
-            attempts: index + 1,
-            width: img.naturalWidth || 0,
-            height: img.naturalHeight || 0,
-            error: img.naturalWidth ? "" : "decoded-empty-image",
-          };
-          updateDebugPanel();
-          if (!img.naturalWidth) retry("decoded-empty-image");
-          else resolve(img);
-        }).catch((err) => retry(`decode: ${err?.message || err || "unknown"}`));
-      };
-      img.onerror = () => retry("network-or-decode-error");
-      img.src = url;
-    });
+      records[name].phase = "download";
+      updateDebugPanel();
+      const blob = await withTimeout(response.blob(), NETWORK_TIMEOUT, "timeout", "response body timeout");
+      if (!blob.size) throw assetError("network", "empty response body");
+
+      records[name].phase = "decode";
+      updateDebugPanel();
+      const img = await decodeBlob(blob, DECODE_TIMEOUT);
+      images[name] = img;
+      records[name].ok = true;
+      records[name].phase = "ready";
+      records[name].width = img.naturalWidth || 0;
+      records[name].height = img.naturalHeight || 0;
+      records[name].durationMs = Math.round(performance.now() - startedAt);
+      updateDebugPanel();
+      return img;
+    } catch (err) {
+      const type = err?.assetType || (err?.name === "AbortError" ? "timeout" : "network");
+      records[name].phase = "failed";
+      records[name].errorType = type;
+      records[name].error = err?.message || String(err);
+      records[name].durationMs = Math.round(performance.now() - startedAt);
+      console.warn(`[Assets] ${name} ${type} failure`, requestUrl, err);
+      updateDebugPanel();
+      if (index + 1 < attempts) await delay(180 * (index + 1));
+      return null;
+    }
   }
 
   function withVersion(src, index) {
-    return src;
+    const separator = src.includes("?") ? "&" : "?";
+    return `${src}${separator}v=${encodeURIComponent(ASSET_VERSION)}&try=${index + 1}`;
+  }
+
+  async function fetchWithTimeout(url, timeoutMs) {
+    if (typeof fetch !== "function") throw assetError("network", "Fetch API unavailable");
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = null;
+    try {
+      const request = fetch(url, {
+        cache: "default",
+        credentials: "same-origin",
+        signal: controller?.signal,
+      });
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller?.abort();
+          reject(assetError("timeout", `network timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+      });
+      return await Promise.race([request, timeout]);
+    } catch (err) {
+      if (err?.assetType) throw err;
+      if (err?.name === "AbortError") throw assetError("timeout", `network timeout after ${timeoutMs}ms`);
+      throw assetError("network", err?.message || "request failed");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function decodeBlob(blob, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(blob);
+      const img = new Image();
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        img.onload = null;
+        img.onerror = null;
+        if (fn === reject) URL.revokeObjectURL(objectUrl);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        finish(reject, assetError("timeout", `image decode timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      img.onload = () => {
+        if (!img.naturalWidth || !img.naturalHeight) {
+          finish(reject, assetError("decode", "decoded image has zero dimensions"));
+          return;
+        }
+        // onload already guarantees a drawable frame. Some mobile WebKit versions
+        // leave img.decode() pending, so it must never gate rendering here.
+        finish(resolve, img);
+      };
+      img.onerror = () => finish(reject, assetError("decode", "browser rejected image data"));
+      img.src = objectUrl;
+    });
+  }
+
+  function withTimeout(promise, timeoutMs, type, message) {
+    let timer = null;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(assetError(type, message)), timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  function assetError(type, message) {
+    const error = new Error(message);
+    error.assetType = type;
+    return error;
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function isUsable(img) {
+    return !!(img && img.complete && img.naturalWidth && img.naturalHeight);
+  }
+
+  function firstUsable(...names) {
+    for (const name of names) {
+      if (isUsable(images[name])) return images[name];
+    }
+    return null;
   }
 
   function stats() {
@@ -115,12 +237,39 @@ const Assets = (() => {
     }
     panel.hidden = false;
     const rows = Object.values(records)
-      .map((item) => `${item.ok ? "OK" : "FAIL"} ${item.name}: ${item.width}x${item.height}${item.error ? ` ${item.error}` : ""}`)
+      .map((item) => {
+        const state = item.ok ? "OK" : item.phase === "failed" ? "FAIL" : "WAIT";
+        const detail = item.error ? ` [${item.errorType}] ${item.error}` : ` [${item.phase}]`;
+        const response = item.httpStatus ? ` HTTP ${item.httpStatus}${item.contentType ? ` ${escapeHtml(item.contentType)}` : ""}` : "";
+        return `${state} ${item.name}: ${item.width}x${item.height}${detail}${response}<br><small>${escapeHtml(item.requestUrl || "")}</small>`;
+      })
       .join("<br>");
-    panel.innerHTML = `<b>素材加载</b> ${data.loaded.length}/${data.total}<br>${rows}`;
+    const runtime = runtimeInfo.canvas
+      ? `<br><b>Canvas</b> ${runtimeInfo.canvas} CSS ${runtimeInfo.css || "?"} frame ${runtimeInfo.frames || 0} painted ${runtimeInfo.painted ? "yes" : "no"}${runtimeInfo.error ? `<br><b>Runtime</b> ${escapeHtml(runtimeInfo.error)}` : ""}`
+      : "";
+    panel.innerHTML = `<b>素材加载</b> ${data.loaded.length}/${data.total}<br>${rows}${runtime}`;
   }
 
-  return { load, get, stats };
+  function setRuntimeInfo(info) {
+    runtimeInfo = { ...runtimeInfo, ...info };
+    updateDebugPanel();
+  }
+
+  function reportRuntimeError(error) {
+    const message = error?.stack || error?.message || String(error);
+    console.error("[Game runtime]", error);
+    setRuntimeInfo({ error: message });
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  return { load, get, peek, isReady, stats, setRuntimeInfo, reportRuntimeError };
 })();
 const AudioManager = (() => {
   const sounds = {};
