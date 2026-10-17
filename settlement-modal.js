@@ -96,10 +96,10 @@ var SettlementModal = (() => {
   function rewardThumb(reward) {
     if (reward.options?.[0]?.image) return reward.options[0].image;
     if (reward.images?.[0]?.image) return reward.images[0].image;
-    if (reward.itemType === "stone") return "assets/Rock.png";
-    if (reward.itemType === "bomb") return "assets/Bomb.png";
-    if (reward.itemType === "mystery") return "assets/MysteryBag.png";
-    if (reward.itemType === "gold") return "assets/GoldSmall.png";
+    if (reward.itemType === "stone") return "assets/Rock.webp";
+    if (reward.itemType === "bomb") return "assets/Bomb.webp";
+    if (reward.itemType === "mystery") return "assets/MysteryBag.webp";
+    if (reward.itemType === "gold") return "assets/GoldSmall.webp";
     return "";
   }
 
