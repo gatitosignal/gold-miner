@@ -73,6 +73,7 @@ var RewardImageLoader = (() => {
     });
     scope.transientUrls.forEach((url) => URL.revokeObjectURL(url));
     scope.transientUrls.clear();
+    trimCache();
     scopes.delete(root);
   }
 
