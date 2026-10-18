@@ -434,18 +434,6 @@ canvas {
   aspect-ratio: 4 / 3;
 }
 
-.quiz-option > span:last-child {
-  display: block;
-  margin-top: 8px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #5a3006;
-  font-weight: 900;
-  font-size: clamp(16px, 2.4vw, 24px);
-}
-
 .quiz-option.is-right {
   border-color: #1f9a3f;
   box-shadow: 0 0 0 4px rgba(31, 154, 63, 0.18);
@@ -647,11 +635,11 @@ canvas {
 .arc-card {
   position: absolute;
   left: -102px;
-  top: -136px;
+  top: -112px;
   width: 204px;
-  height: 276px;
+  height: 224px;
   box-sizing: border-box;
-  padding: 10px 10px 42px;
+  padding: 10px;
   border-radius: 12px;
   background: #fffaf0;
   box-shadow: 0 10px 25px rgba(60, 29, 11, 0.33);
@@ -661,18 +649,9 @@ canvas {
 }
 
 .arc-card .reward-img {
-  height: 204px;
+  height: 100%;
   border-radius: 7px;
   pointer-events: none;
-}
-
-.arc-card b,
-.stack-card b {
-  display: block;
-  margin-top: 9px;
-  text-align: center;
-  color: #4f2a07;
-  font-size: 20px;
 }
 
 .circular-help,
@@ -713,7 +692,7 @@ canvas {
   position: absolute;
   inset: 0;
   box-sizing: border-box;
-  padding: 16px 16px 68px;
+  padding: 16px;
   border: 7px solid #8b5408;
   border-radius: 22px;
   background: #fffaf0;
@@ -723,7 +702,7 @@ canvas {
 }
 
 .stack-card .reward-img {
-  height: calc(100% - 50px);
+  height: 100%;
   border-radius: 12px;
 }
 
@@ -884,11 +863,6 @@ canvas {
     border-radius: 14px;
   }
 
-  .quiz-option span:last-child {
-    margin-top: 4px;
-    font-size: clamp(13px, 4vw, 17px);
-  }
-
   .quiz-feedback {
     margin-top: 8px;
     font-size: clamp(18px, 5vw, 24px);
@@ -900,14 +874,14 @@ canvas {
 
   .arc-card {
     left: -78px;
-    top: -107px;
+    top: -83px;
     width: 156px;
-    height: 214px;
+    height: 166px;
     transform-origin: 50% 330px;
   }
 
   .arc-card .reward-img {
-    height: 146px;
+    height: 100%;
   }
 
   .card-stack {
@@ -916,7 +890,7 @@ canvas {
   }
 
   .stack-card {
-    padding: 10px 10px 54px;
+    padding: 10px;
   }
 
   .reward-action {

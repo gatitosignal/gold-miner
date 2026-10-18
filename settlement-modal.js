@@ -90,7 +90,9 @@ var SettlementModal = (() => {
   }
 
   function rewardThumb(reward) {
-    if (reward.options?.[0]?.image) return reward.options[0].image;
+    if (reward.options?.[0]?.thumbnail || reward.options?.[0]?.image) {
+      return reward.options[0].thumbnail || reward.options[0].image;
+    }
     if (reward.images?.[0]?.image) return reward.images[0].image;
     if (reward.itemType === "stone") return "assets/Rock.webp";
     if (reward.itemType === "bomb") return "assets/Bomb.webp";

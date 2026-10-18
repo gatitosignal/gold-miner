@@ -1,9 +1,11 @@
 var RewardImageLoader = (() => {
-  const VERSION = "20261017-mobile-memory-v4";
+  const VERSION = "20261018-decoded-cache-v5";
   const MAX_CONCURRENT = 2;
   const REQUEST_TIMEOUT = 45000;
   const DECODE_TIMEOUT = 12000;
   const MAX_CACHE_BYTES = 4 * 1024 * 1024;
+  const MAX_DECODED_BYTES = 12 * 1024 * 1024;
+  const MAX_CACHE_ENTRIES = 24;
   const RETRIES = 2;
   const queue = [];
   const scopes = new WeakMap();
@@ -11,6 +13,7 @@ var RewardImageLoader = (() => {
   const records = [];
   let active = 0;
   let cachedBytes = 0;
+  let decodedBytes = 0;
 
   function markup(src, label, fallback = "图片加载失败") {
     if (!src) {
@@ -29,7 +32,7 @@ var RewardImageLoader = (() => {
 
   function bind(root) {
     dispose(root);
-    const scope = { root, disposed: false, controllers: new Set(), objectUrls: new Set() };
+    const scope = { root, disposed: false, controllers: new Set(), transientUrls: new Set() };
     scopes.set(root, scope);
     root.querySelectorAll("img[data-reward-src]").forEach((img) => enqueue(() => loadElement(scope, img)));
     scope.clickHandler = (event) => {
@@ -58,9 +61,18 @@ var RewardImageLoader = (() => {
     scope.controllers.clear();
     root.removeEventListener("click", scope.clickHandler);
     root.removeEventListener("keydown", scope.keyHandler);
-    root.querySelectorAll("img[data-reward-src]").forEach((img) => img.removeAttribute("src"));
-    scope.objectUrls.forEach((url) => URL.revokeObjectURL(url));
-    scope.objectUrls.clear();
+    root.querySelectorAll("img[data-reward-src]").forEach((img) => {
+      const key = img.dataset.rewardCacheKey;
+      const cached = key ? blobCache.get(key) : null;
+      if (cached?.image === img) {
+        img.remove();
+        cached.lastUsed = performance.now();
+      } else {
+        img.removeAttribute("src");
+      }
+    });
+    scope.transientUrls.forEach((url) => URL.revokeObjectURL(url));
+    scope.transientUrls.clear();
     scopes.delete(root);
   }
 
@@ -109,21 +121,25 @@ var RewardImageLoader = (() => {
         startedAt: Math.round(performance.now()),
         durationMs: 0,
         fromCache: false,
+        fromDecodedCache: false,
+        downloadMs: 0,
+        decodeMs: 0,
+        displayMs: 0,
       };
       records.push(record);
       if (records.length > 100) records.shift();
       try {
-        const blob = await fetchBlob(scope, record);
+        const resource = await fetchBlob(scope, record);
         if (scope.disposed) return;
         record.phase = "decode";
         setState(holder, "loading", `正在解码${attempt > 1 ? `（重试 ${attempt}）` : ""}…`);
-        await showBlob(scope, img, blob, record);
+        const displayedImage = await showBlob(scope, img, resource, record);
         if (scope.disposed) return;
         record.ok = true;
         record.phase = "ready";
         record.durationMs = Math.round(performance.now() - record.startedAt);
         setState(holder, "ready", "");
-        requestAnimationFrame(() => auditRender(img, record));
+        requestAnimationFrame(() => auditRender(displayedImage, record));
         return;
       } catch (error) {
         if (scope.disposed || error?.imageType === "cancelled") return;
@@ -151,12 +167,14 @@ var RewardImageLoader = (() => {
     if (cached) {
       cached.lastUsed = performance.now();
       record.fromCache = true;
+      record.fromDecodedCache = !!(cached.image?.complete && cached.image.naturalWidth);
       record.contentType = cached.blob.type;
       record.bytes = cached.blob.size;
       record.phase = "cache";
-      return cached.blob;
+      return cached;
     }
 
+    const downloadStartedAt = performance.now();
     const controller = new AbortController();
     scope.controllers.add(controller);
     let timedOut = false;
@@ -181,8 +199,8 @@ var RewardImageLoader = (() => {
       const blob = await response.blob();
       if (!blob.size) throw imageError("network", "empty response body");
       record.bytes = blob.size;
-      addToCache(url, blob);
-      return blob;
+      record.downloadMs = Math.round(performance.now() - downloadStartedAt);
+      return addToCache(url, blob);
     } catch (error) {
       if (error?.imageType) throw error;
       if (timedOut) throw imageError("timeout", `download timeout after ${REQUEST_TIMEOUT}ms`);
@@ -194,10 +212,28 @@ var RewardImageLoader = (() => {
     }
   }
 
-  function showBlob(scope, img, blob, record) {
+  function showBlob(scope, img, resource, record) {
     return new Promise((resolve, reject) => {
-      const objectUrl = URL.createObjectURL(blob);
-      scope.objectUrls.add(objectUrl);
+      const decodeStartedAt = performance.now();
+      if (resource.image?.complete && resource.image.naturalWidth && resource.image.naturalHeight) {
+        const cachedImage = resource.image;
+        cachedImage.alt = img.alt;
+        cachedImage.dataset.rewardSrc = img.dataset.rewardSrc;
+        cachedImage.dataset.rewardCacheKey = record.requestUrl;
+        cachedImage.hidden = false;
+        img.replaceWith(cachedImage);
+        resource.lastUsed = performance.now();
+        record.fromDecodedCache = true;
+        record.width = cachedImage.naturalWidth;
+        record.height = cachedImage.naturalHeight;
+        record.decodeMs = 0;
+        resolve(cachedImage);
+        return;
+      }
+
+      const objectUrl = resource.objectUrl || URL.createObjectURL(resource.blob);
+      resource.objectUrl = objectUrl;
+      if (!resource.cached) scope.transientUrls.add(objectUrl);
       let settled = false;
       const finish = (fn, value) => {
         if (settled) return;
@@ -207,8 +243,10 @@ var RewardImageLoader = (() => {
         img.onerror = null;
         if (fn === reject) {
           img.removeAttribute("src");
-          URL.revokeObjectURL(objectUrl);
-          scope.objectUrls.delete(objectUrl);
+          if (!resource.cached) {
+            URL.revokeObjectURL(objectUrl);
+            scope.transientUrls.delete(objectUrl);
+          }
         }
         fn(value);
       };
@@ -220,6 +258,15 @@ var RewardImageLoader = (() => {
         }
         record.width = img.naturalWidth;
         record.height = img.naturalHeight;
+        record.decodeMs = Math.round(performance.now() - decodeStartedAt);
+        if (resource.cached) {
+          resource.image = img;
+          resource.decodedBytes = img.naturalWidth * img.naturalHeight * 4;
+          resource.lastUsed = performance.now();
+          img.dataset.rewardCacheKey = record.requestUrl;
+          recalculateDecodedBytes();
+          trimCache();
+        }
         img.hidden = false;
         finish(resolve, img);
       };
@@ -234,6 +281,7 @@ var RewardImageLoader = (() => {
     const style = getComputedStyle(img);
     record.renderedWidth = Math.round(rect.width);
     record.renderedHeight = Math.round(rect.height);
+    record.displayMs = Math.round(performance.now() - record.startedAt);
     if (!rect.width || !rect.height || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
       record.ok = false;
       record.phase = "failed";
@@ -264,14 +312,14 @@ var RewardImageLoader = (() => {
   }
 
   function addToCache(url, blob) {
-    if (blob.size > MAX_CACHE_BYTES) return;
-    while (cachedBytes + blob.size > MAX_CACHE_BYTES && blobCache.size) {
-      const oldest = [...blobCache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
-      blobCache.delete(oldest[0]);
-      cachedBytes -= oldest[1].blob.size;
+    if (blob.size > MAX_CACHE_BYTES) {
+      return { blob, lastUsed: performance.now(), objectUrl: "", image: null, decodedBytes: 0, cached: false };
     }
-    blobCache.set(url, { blob, lastUsed: performance.now() });
+    const resource = { blob, lastUsed: performance.now(), objectUrl: "", image: null, decodedBytes: 0, cached: true };
+    blobCache.set(url, resource);
     cachedBytes += blob.size;
+    trimCache();
+    return resource;
   }
 
   function removeFromCache(url) {
@@ -279,6 +327,41 @@ var RewardImageLoader = (() => {
     if (!cached) return;
     blobCache.delete(url);
     cachedBytes -= cached.blob.size;
+    decodedBytes -= cached.decodedBytes || 0;
+    if (cached.image) cached.image.removeAttribute("src");
+    if (cached.objectUrl) URL.revokeObjectURL(cached.objectUrl);
+  }
+
+  function dropDecodedResource(resource) {
+    if (!resource || resource.image?.isConnected) return false;
+    if (resource.image) resource.image.removeAttribute("src");
+    if (resource.objectUrl) URL.revokeObjectURL(resource.objectUrl);
+    resource.image = null;
+    resource.objectUrl = "";
+    resource.decodedBytes = 0;
+    return true;
+  }
+
+  function recalculateDecodedBytes() {
+    decodedBytes = [...blobCache.values()].reduce((sum, item) => sum + (item.decodedBytes || 0), 0);
+  }
+
+  function trimCache() {
+    recalculateDecodedBytes();
+    while (decodedBytes > MAX_DECODED_BYTES) {
+      const oldestDecoded = [...blobCache.values()]
+        .filter((item) => item.decodedBytes && !item.image?.isConnected)
+        .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+      if (!oldestDecoded || !dropDecodedResource(oldestDecoded)) break;
+      recalculateDecodedBytes();
+    }
+    while (blobCache.size > MAX_CACHE_ENTRIES || cachedBytes > MAX_CACHE_BYTES) {
+      const oldest = [...blobCache.entries()]
+        .filter(([, item]) => !item.image?.isConnected)
+        .sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+      if (!oldest) break;
+      removeFromCache(oldest[0]);
+    }
   }
 
   function versionedUrl(source) {
@@ -310,7 +393,11 @@ var RewardImageLoader = (() => {
       active,
       queued: queue.length,
       cachedBytes,
+      decodedBytes,
       cacheEntries: blobCache.size,
+      maxCacheBytes: MAX_CACHE_BYTES,
+      maxDecodedBytes: MAX_DECODED_BYTES,
+      maxCacheEntries: MAX_CACHE_ENTRIES,
       records: records.map((record) => ({ ...record })),
     };
   }
@@ -417,15 +504,12 @@ var RewardModal = (() => {
     const list = document.createElement("div");
     list.className = "quiz-grid";
     options.forEach((option, index) => {
-      const label = displayLabel(option, `选项 ${index + 1}`);
       const item = document.createElement("button");
       item.type = "button";
       item.className = "quiz-option";
+      item.setAttribute("aria-label", `选择第 ${index + 1} 张图片`);
       item.dataset.correct = option.correct ? "true" : "false";
-      item.innerHTML = `
-        ${imageBlock(option.image, label)}
-        <span>${escapeHtml(label)}</span>
-      `;
+      item.innerHTML = imageBlock(option.thumbnail || option.image, "奖励选项图片");
       list.appendChild(item);
     });
     const feedback = document.createElement("p");
@@ -460,8 +544,7 @@ var RewardModal = (() => {
         <div class="arc-stage">
         ${images.map((item, index) => `
           <article class="arc-card" data-index="${index}">
-            ${imageBlock(item.image, displayLabel(item, `照片 ${index + 1}`))}
-            <b>${escapeHtml(displayLabel(item, `照片 ${index + 1}`))}</b>
+            ${imageBlock(item.image, "奖励图片")}
           </article>
         `).join("")}
         </div>
@@ -476,8 +559,7 @@ var RewardModal = (() => {
         <button class="card-stack" type="button" aria-label="切换照片">
         ${images.map((item, index) => `
           <article class="stack-card" data-index="${index}">
-            ${imageBlock(item.image, displayLabel(item, `照片 ${index + 1}`))}
-            <b>${escapeHtml(displayLabel(item, `照片 ${index + 1}`))}</b>
+            ${imageBlock(item.image, "奖励图片")}
           </article>
         `).join("")}
         </button>
@@ -617,23 +699,6 @@ var RewardModal = (() => {
 
   function imageBlock(src, label) {
     return RewardImageLoader.markup(src, label);
-  }
-
-  function displayLabel(item, fallback = "") {
-    if (item.label) return item.label;
-    return labelFromPath(item.image) || fallback;
-  }
-
-  function labelFromPath(path) {
-    if (!path) return "";
-    if (/^data:/i.test(path)) return "";
-    const file = decodeURIComponent(path.split(/[\\/]/).pop() || "");
-    const base = file.replace(/\.[^.]+$/, "");
-    const cleaned = base
-      .replace(/^(food|boardgame|movie|view|trip|concert|event)[-_]*/i, "")
-      .replace(/[-_]+/g, " ")
-      .trim();
-    return cleaned || base;
   }
 
   function themeForReward(reward) {
