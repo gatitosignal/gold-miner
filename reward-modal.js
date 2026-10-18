@@ -1,5 +1,5 @@
 var RewardImageLoader = (() => {
-  const VERSION = "20261018-decoded-cache-v5";
+  const VERSION = "20261018-decoded-cache-v5-1";
   const MAX_CONCURRENT = 2;
   const REQUEST_TIMEOUT = 45000;
   const DECODE_TIMEOUT = 12000;
