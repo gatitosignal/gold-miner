@@ -1,5 +1,5 @@
 var RewardImageLoader = (() => {
-  const VERSION = "20261023-original-assets-v8";
+  const VERSION = "20261023-direct-images-v9";
   const MAX_CONCURRENT = 2;
   const REQUEST_TIMEOUT = 45000;
   const DECODE_TIMEOUT = 12000;
@@ -17,17 +17,9 @@ var RewardImageLoader = (() => {
 
   function markup(src, label, fallback = "图片加载失败") {
     if (!src) {
-      return `<span class="reward-img"><span class="image-placeholder">待替换图片</span></span>`;
+      return `<span class="reward-img"></span>`;
     }
-    return `
-      <span class="reward-img is-loading">
-        <img data-reward-src="${escapeAttr(src)}" alt="${escapeAttr(label || "奖励图片")}" draggable="false" hidden />
-        <span class="image-placeholder" role="status">
-          <span class="image-status">图片加载中…</span>
-          <span class="image-retry" role="button" tabindex="0" hidden>${escapeHtml(fallback)}，点此重试</span>
-        </span>
-      </span>
-    `;
+    return `<span class="reward-img"><img src="${escapeAttr(src)}" alt="${escapeAttr(label || "奖励图片")}" draggable="false" /></span>`;
   }
 
   function bind(root) {

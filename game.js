@@ -50,7 +50,6 @@
     AudioManager.unlock();
     const p = pointerPos(evt);
     if (game.screen === "START") {
-      if (!Assets.progress().complete) return;
       const b = game.startButton;
       if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
         startGame();
@@ -255,7 +254,7 @@
     if (Assets.isReady("StartButton") && button) {
       ctx.drawImage(button, b.x, b.y, b.w, b.h);
     } else {
-      drawNativeStartButton(b, Assets.progress().complete ? "开始游戏" : "素材加载中");
+      drawNativeStartButton(b, "开始游戏");
     }
     ctx.restore();
   }
