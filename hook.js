@@ -51,7 +51,7 @@ class HookSystem {
     if (this.state === "SHOOT") {
       const delta = dt * CONFIG.hook.shootSpeed;
       this.length += delta;
-      const hit = objects.find((obj) => obj.hit(this.collisionPoint));
+      const hit = objects.find((obj) => obj.hit(this.collisionPoint) || obj.hit(this.hookAnchor));
       if (hit) {
         this.grabbed = hit;
         hit.attach(this.hookAnchor);
