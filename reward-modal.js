@@ -1,5 +1,5 @@
 var RewardImageLoader = (() => {
-  const VERSION = "20261018-decoded-cache-v5-1";
+  const VERSION = "20261023-envelope-title-v6-1";
   const MAX_CONCURRENT = 2;
   const REQUEST_TIMEOUT = 45000;
   const DECODE_TIMEOUT = 12000;
@@ -444,7 +444,7 @@ var RewardModal = (() => {
   function renderShell(reward) {
     const shell = document.createElement("section");
     shell.className = `reward-shell reward-theme-${themeForReward(reward)}`;
-    const title = reward.template === "coupon" ? "" : (reward.title || reward.couponName || "奖励");
+    const title = ["coupon", "envelope"].includes(reward.template) ? "" : (reward.title || reward.couponName || "奖励");
     shell.innerHTML = `
       <div class="reward-frame">
         ${title ? `<header class="reward-header"><h2>${escapeHtml(title)}</h2></header>` : ""}
