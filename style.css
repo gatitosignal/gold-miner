@@ -70,6 +70,7 @@ canvas {
 }
 
 .asset-debug {
+  display: none !important;
   position: fixed;
   left: 8px;
   top: 8px;

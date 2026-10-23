@@ -1,7 +1,7 @@
 const Assets = (() => {
   const sources = {
     StartScreen: "assets/start-reference.png",
-    StartButton: "assets/StartButton.png",
+    StartButton: "assets/StartButton.webp",
     Miner: "assets/Miner.png",
     MinerLower: "assets/MinerLower.png",
     MinerRaise: "assets/MinerRaise.png",
@@ -23,7 +23,7 @@ const Assets = (() => {
   const BODY_IDLE_TIMEOUT = 20000;
   const BODY_FALLBACK_TIMEOUT = 60000;
   const DECODE_TIMEOUT = 8000;
-  const ASSET_VERSION = "20261023-original-assets-v8";
+  const ASSET_VERSION = "20261023-direct-images-v9";
   const core = Object.keys(sources);
   let panel = null;
   let loadPromise = null;
@@ -299,6 +299,9 @@ const Assets = (() => {
   }
 
   function updateDebugPanel() {
+    return;
+    /* Legacy diagnostics retained below for development reference. */
+    /* eslint-disable no-unreachable */
     const data = stats();
     const shouldShow = data.failed.length || new URLSearchParams(location.search).has("debug");
     if (!shouldShow) {
