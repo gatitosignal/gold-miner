@@ -161,7 +161,7 @@ const REWARDS = [
     template: "gift",
     title: "找到真正的宝藏了",
     text: "前面的宝藏都在游戏里，这个不一样——它真的存在。",
-    hint: "提示：去包里里找找吧！",
+    hint: "提示：去蛋糕后面找找吧！",
     button: "打开礼物",
     claimed: false,
   },
