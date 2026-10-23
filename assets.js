@@ -23,7 +23,7 @@ const Assets = (() => {
   const BODY_IDLE_TIMEOUT = 20000;
   const BODY_FALLBACK_TIMEOUT = 60000;
   const DECODE_TIMEOUT = 8000;
-  const ASSET_VERSION = "20261023-original-assets-v7";
+  const ASSET_VERSION = "20261023-original-assets-v8";
   const core = Object.keys(sources);
   let panel = null;
   let loadPromise = null;

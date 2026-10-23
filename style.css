@@ -634,16 +634,16 @@ canvas {
 
 .arc-card {
   position: absolute;
-  left: -102px;
-  top: -112px;
-  width: 204px;
-  height: 224px;
+  left: -140px;
+  top: -155px;
+  width: 280px;
+  height: 310px;
   box-sizing: border-box;
   padding: 10px;
   border-radius: 12px;
   background: #fffaf0;
   box-shadow: 0 10px 25px rgba(60, 29, 11, 0.33);
-  transform-origin: 50% 438px;
+  transform-origin: 50% 520px;
   transition: filter 0.2s, opacity 0.2s;
   user-select: none;
 }
@@ -652,6 +652,10 @@ canvas {
   height: 100%;
   border-radius: 7px;
   pointer-events: none;
+}
+
+.arc-card .reward-img img {
+  object-fit: cover;
 }
 
 .circular-help,
