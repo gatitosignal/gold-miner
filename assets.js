@@ -1,18 +1,18 @@
 const Assets = (() => {
   const sources = {
-    StartScreen: "assets/start-reference.webp",
-    StartButton: "assets/StartButton.webp",
-    Miner: "assets/Miner.webp",
-    MinerLower: "assets/MinerLower.webp",
-    MinerRaise: "assets/MinerRaise.webp",
-    Winch: "assets/Winch.webp",
-    Claw: "assets/Claw.webp",
-    Rope: "assets/Rope.webp",
-    GoldSmall: "assets/GoldSmall.webp",
-    GoldLarge: "assets/GoldLarge.webp",
-    Rock: "assets/Rock.webp",
-    Bomb: "assets/Bomb.webp",
-    MysteryBag: "assets/MysteryBag.webp",
+    StartScreen: "assets/start-reference.png",
+    StartButton: "assets/StartButton.png",
+    Miner: "assets/Miner.png",
+    MinerLower: "assets/MinerLower.png",
+    MinerRaise: "assets/MinerRaise.png",
+    Winch: "assets/Winch.png",
+    Claw: "assets/Claw.png",
+    Rope: "assets/Rope.png",
+    GoldSmall: "assets/GoldSmall.png",
+    GoldLarge: "assets/GoldLarge.png",
+    Rock: "assets/Rock.png",
+    Bomb: "assets/Bomb.png",
+    MysteryBag: "assets/MysteryBag.png",
   };
 
   const images = {};
@@ -23,7 +23,7 @@ const Assets = (() => {
   const BODY_IDLE_TIMEOUT = 20000;
   const BODY_FALLBACK_TIMEOUT = 60000;
   const DECODE_TIMEOUT = 8000;
-  const ASSET_VERSION = "20261018-decoded-cache-v5-1";
+  const ASSET_VERSION = "20261023-original-assets-v7";
   const core = Object.keys(sources);
   let panel = null;
   let loadPromise = null;

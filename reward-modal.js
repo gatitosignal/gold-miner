@@ -1,5 +1,5 @@
 var RewardImageLoader = (() => {
-  const VERSION = "20261023-envelope-title-v6-1";
+  const VERSION = "20261023-original-assets-v7";
   const MAX_CONCURRENT = 2;
   const REQUEST_TIMEOUT = 45000;
   const DECODE_TIMEOUT = 12000;
@@ -510,7 +510,7 @@ var RewardModal = (() => {
       item.className = "quiz-option";
       item.setAttribute("aria-label", `选择第 ${index + 1} 张图片`);
       item.dataset.correct = option.correct ? "true" : "false";
-      item.innerHTML = imageBlock(option.thumbnail || option.image, "奖励选项图片");
+      item.innerHTML = imageBlock(option.image, "奖励选项图片");
       list.appendChild(item);
     });
     const feedback = document.createElement("p");
